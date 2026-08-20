@@ -105,7 +105,7 @@ async fn file_is_valid(path: &Path, download: &Download) -> Result<bool> {
         return Ok(false);
     }
     if download.sha1.is_empty() {
-        return Ok(true);
+        return Ok(metadata.len() > 0);
     }
 
     let mut file = fs::File::open(path).await?;

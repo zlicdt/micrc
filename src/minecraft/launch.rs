@@ -12,7 +12,10 @@ use crate::config::{Account, AccountKind, Settings};
 use super::{
     TaskEvent,
     install::download_name,
-    metadata::{Platform, VersionMetadata, expand_arguments, maven_download, rules_allow},
+    metadata::{
+        AssetIndex, NativeLibrary, Platform, VersionMetadata, expand_arguments, maven_download,
+        native_library, rules_allow,
+    },
     paths::MinecraftPaths,
 };
 
@@ -42,6 +45,12 @@ pub fn build_launch_command(
     let mut classpath = Vec::new();
     for library in &metadata.libraries {
         if !rules_allow(&library.rules, &platform) {
+            continue;
+        }
+        if matches!(
+            native_library(library, &platform),
+            Some((NativeLibrary::Coordinate, _))
+        ) {
             continue;
         }
         if let Some(download) = library
@@ -80,6 +89,12 @@ pub fn build_launch_command(
     );
     replacements.insert("assets_root", paths.assets().to_string_lossy().into_owned());
     replacements.insert("assets_index_name", asset_index_name.to_owned());
+    replacements.insert(
+        "game_assets",
+        legacy_assets_path(paths, asset_index_name)
+            .to_string_lossy()
+            .into_owned(),
+    );
     replacements.insert("auth_uuid", account.id.clone());
     let access_token = if account.kind == AccountKind::Microsoft {
         account.access_token.clone()
@@ -256,6 +271,18 @@ fn parse_java_major(text: &str) -> Option<u32> {
     }
 }
 
+fn legacy_assets_path(paths: &MinecraftPaths, asset_index_name: &str) -> PathBuf {
+    let map_to_resources = std::fs::read(paths.asset_index(asset_index_name))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AssetIndex>(&bytes).ok())
+        .is_some_and(|index| index.map_to_resources);
+    if map_to_resources {
+        paths.game_dir().join("resources")
+    } else {
+        paths.assets().join("virtual").join(asset_index_name)
+    }
+}
+
 fn replace_placeholders(value: &str, replacements: &HashMap<&str, String>) -> String {
     let mut result = value.to_owned();
     for (key, replacement) in replacements {
@@ -373,5 +400,56 @@ mod tests {
                 .any(|value| value == "minecraft-access-token")
         );
         assert!(command.args.iter().any(|value| value == "msa"));
+    }
+
+    #[test]
+    fn resolves_legacy_game_assets_from_the_asset_index() {
+        let metadata: VersionMetadata = serde_json::from_value(serde_json::json!({
+            "id": "legacy-version",
+            "type": "release",
+            "mainClass": "com.example.Main",
+            "assets": "pre-1.6",
+            "assetIndex": { "id": "pre-1.6", "url": "https://example.invalid/pre-1.6.json" },
+            "downloads": {
+                "client": { "url": "https://example.invalid/client.jar" }
+            },
+            "libraries": [],
+            "minecraftArguments": "--assetsDir ${game_assets}"
+        }))
+        .unwrap();
+        let temporary = temp_dir::TempDir::new().unwrap();
+        let paths = MinecraftPaths::new(temporary.path());
+        std::fs::create_dir_all(paths.asset_index("pre-1.6").parent().unwrap()).unwrap();
+        std::fs::write(
+            paths.asset_index("pre-1.6"),
+            serde_json::to_vec(&serde_json::json!({
+                "map_to_resources": true,
+                "objects": {}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let command = build_launch_command(
+            &metadata,
+            &Account::offline("Player"),
+            &Settings::default(),
+            &paths,
+        )
+        .unwrap();
+
+        let expected = paths.game_dir().join("resources");
+        assert!(
+            command
+                .args
+                .iter()
+                .any(|value| value == &expected.to_string_lossy())
+        );
+        assert!(
+            !command
+                .args
+                .iter()
+                .any(|value| value.contains("${game_assets}"))
+        );
     }
 }

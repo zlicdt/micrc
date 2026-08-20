@@ -346,7 +346,12 @@ async fn exchange_for_minecraft(
         .await
         .context("failed to check Minecraft ownership")?;
     let entitlements: Entitlements = parse_response(response, "Minecraft ownership check").await?;
-    if entitlements.items.is_empty() {
+    let owns_java = entitlements.items.iter().any(|item| {
+        item.get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|name| name == "product_minecraft" || name == "game_minecraft")
+    });
+    if !owns_java {
         bail!("This Microsoft account does not own Minecraft: Java Edition");
     }
 

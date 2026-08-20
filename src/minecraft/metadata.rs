@@ -234,8 +234,10 @@ pub fn rules_allow(rules: &[Rule], platform: &Platform) -> bool {
 }
 
 fn rule_matches(rule: &Rule, platform: &Platform) -> bool {
-    if rule.features.values().any(|expected| *expected) {
-        return false;
+    for (feature, expected) in &rule.features {
+        if feature_enabled(feature) != *expected {
+            return false;
+        }
     }
     if let Some(os) = &rule.os {
         if os.name.as_ref().is_some_and(|name| name != &platform.os) {
@@ -296,11 +298,41 @@ pub fn expand_arguments(arguments: &[Argument], platform: &Platform) -> Vec<Stri
     expanded
 }
 
-pub fn native_classifier(library: &Library, platform: &Platform) -> Option<String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLibrary {
+    Mapped,
+    Coordinate,
+}
+
+pub fn native_library(library: &Library, platform: &Platform) -> Option<(NativeLibrary, String)> {
+    if let Some(classifier) = library.natives.get(&platform.os) {
+        return Some((
+            NativeLibrary::Mapped,
+            classifier.replace("${arch}", platform.bits),
+        ));
+    }
     library
-        .natives
-        .get(&platform.os)
-        .map(|value| value.replace("${arch}", platform.bits))
+        .name
+        .split(':')
+        .nth(3)
+        .filter(|classifier| classifier.starts_with("natives-"))
+        .map(|classifier| (NativeLibrary::Coordinate, classifier.to_owned()))
+}
+
+pub fn native_classifier(library: &Library, platform: &Platform) -> Option<String> {
+    native_library(library, platform).map(|(_, classifier)| classifier)
+}
+
+fn feature_enabled(feature: &str) -> bool {
+    match feature {
+        "has_custom_resolution" => true,
+        "is_demo_user" => false,
+        "has_quick_plays_support" => false,
+        "is_quick_play_singleplayer" => false,
+        "is_quick_play_multiplayer" => false,
+        "is_quick_play_realms" => false,
+        _ => false,
+    }
 }
 
 pub fn maven_download(library: &Library, classifier: Option<&str>) -> Option<Download> {
@@ -375,6 +407,49 @@ mod tests {
         assert_eq!(
             native_classifier(&library, &windows).as_deref(),
             Some("natives-windows-64")
+        );
+    }
+
+    #[test]
+    fn applies_known_feature_rules() {
+        let linux = Platform::test("linux", "x86_64", "64");
+        let rule = |features: HashMap<String, bool>| Rule {
+            action: RuleAction::Allow,
+            os: None,
+            features,
+        };
+
+        assert!(rules_allow(
+            &[rule(HashMap::from([(
+                "has_custom_resolution".to_owned(),
+                true,
+            )]))],
+            &linux
+        ));
+        assert!(!rules_allow(
+            &[rule(HashMap::from([("is_demo_user".to_owned(), true)]))],
+            &linux
+        ));
+        assert!(rules_allow(
+            &[rule(HashMap::from([("is_demo_user".to_owned(), false)]))],
+            &linux
+        ));
+    }
+
+    #[test]
+    fn recognizes_coordinate_native_libraries() {
+        let library = Library {
+            name: "org.lwjgl:lwjgl:3.3.3:natives-linux".to_owned(),
+            downloads: LibraryDownloads::default(),
+            rules: Vec::new(),
+            natives: HashMap::new(),
+            extract: None,
+            url: None,
+        };
+        let linux = Platform::test("linux", "x86_64", "64");
+        assert_eq!(
+            native_library(&library, &linux),
+            Some((NativeLibrary::Coordinate, "natives-linux".to_owned()))
         );
     }
 

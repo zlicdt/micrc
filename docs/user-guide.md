@@ -16,9 +16,9 @@ To sign in:
 
 The terminal dialog always keeps the verification URL and code visible. If the browser does not open, visit that URL manually. Press `Enter` or `o` to ask micrc to open it again. Press `Esc` to cancel the login.
 
-micrc uses `xdg-open` on Unix-like desktop systems, `open` on macOS, and the Windows URL handler on Windows. A minimal or remote environment may not have a graphical browser handler, so the manual URL remains available.
+micrc uses `xdg-open` on Linux. A minimal or remote environment may not have a graphical browser handler, so the manual URL remains available.
 
-Access and refresh tokens are stored in `config.json`. On Unix systems, the micrc data directory uses mode `0700` and the configuration file uses mode `0600`. Remove an account from the Accounts workspace with `d` or `Delete` to remove its stored tokens from the configuration.
+Access and refresh tokens are stored in `config.json`. micrc sets the data directory to mode `0700` and the configuration file to mode `0600`. Remove an account from the Accounts workspace with `d` or `Delete` to remove its stored tokens from the configuration.
 
 ## Offline account names
 

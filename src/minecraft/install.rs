@@ -17,8 +17,8 @@ use super::{
     TaskEvent, VERSION_MANIFEST_URL,
     download::{download_to, fetch_bytes},
     metadata::{
-        AssetIndex, Download, Platform, VersionManifest, VersionMetadata, VersionSummary,
-        maven_download, native_classifier, rules_allow,
+        AssetIndex, Download, NativeLibrary, Platform, VersionManifest, VersionMetadata,
+        VersionSummary, maven_download, native_library, rules_allow,
     },
     paths::MinecraftPaths,
 };
@@ -87,6 +87,7 @@ pub async fn install_version(
     version: VersionSummary,
     events: UnboundedSender<TaskEvent>,
 ) -> Result<()> {
+    validate_version_id(&version.id)?;
     events
         .send(TaskEvent::Status(format!(
             "Reading metadata for {}",
@@ -98,40 +99,54 @@ pub async fn install_version(
         .with_context(|| format!("failed to parse metadata for {}", version.id))?;
     let version_dir = paths.version_dir(&version.id);
     fs::create_dir_all(&version_dir).await?;
-    write_atomic(&paths.version_json(&version.id), &metadata_bytes).await?;
 
     events
         .send(TaskEvent::Status(format!("Installing {}", version.id)))
         .ok();
-    let mut primary = vec![InstallFile {
-        download: metadata.downloads.client.clone(),
-        path: paths.version_jar(&version.id),
-        label: "client".to_owned(),
-    }];
-    if let Some(logging) = &metadata.logging {
-        let name = download_name(&logging.client.file, "client-log.xml");
-        primary.push(InstallFile {
-            download: logging.client.file.clone(),
-            path: paths.assets().join("log_configs").join(name),
-            label: "logging configuration".to_owned(),
-        });
-    }
-    download_files(&client, primary, &events).await?;
-
     let platform = Platform::current();
     let mut libraries = Vec::new();
+    let mut native_files = Vec::new();
     let mut native_archives = Vec::new();
     let mut seen = HashSet::new();
     for library in &metadata.libraries {
         if !rules_allow(&library.rules, &platform) {
             continue;
         }
-        let artifact = library
-            .downloads
-            .artifact
-            .clone()
-            .or_else(|| maven_download(library, None));
-        if let Some(download) = artifact {
+        let native = native_library(library, &platform);
+        let is_coordinate_native = matches!(native.as_ref(), Some((NativeLibrary::Coordinate, _)));
+        if let Some((kind, classifier)) = native {
+            let download = match kind {
+                NativeLibrary::Mapped => library
+                    .downloads
+                    .classifiers
+                    .get(&classifier)
+                    .cloned()
+                    .or_else(|| maven_download(library, Some(&classifier))),
+                NativeLibrary::Coordinate => library
+                    .downloads
+                    .artifact
+                    .clone()
+                    .or_else(|| maven_download(library, Some(&classifier))),
+            };
+            if let Some(download) = download {
+                let path = paths.libraries().join(&download.path);
+                if seen.insert(path.clone()) {
+                    native_files.push(InstallFile {
+                        label: format!("{} ({classifier})", library.name),
+                        download,
+                        path: path.clone(),
+                    });
+                }
+                native_archives.push((path, library.extract.clone()));
+            }
+        }
+        if !is_coordinate_native
+            && let Some(download) = library
+                .downloads
+                .artifact
+                .clone()
+                .or_else(|| maven_download(library, None))
+        {
             let path = paths.libraries().join(&download.path);
             if seen.insert(path.clone()) {
                 libraries.push(InstallFile {
@@ -141,27 +156,9 @@ pub async fn install_version(
                 });
             }
         }
-        if let Some(classifier) = native_classifier(library, &platform) {
-            let download = library
-                .downloads
-                .classifiers
-                .get(&classifier)
-                .cloned()
-                .or_else(|| maven_download(library, Some(&classifier)));
-            if let Some(download) = download {
-                let path = paths.libraries().join(&download.path);
-                if seen.insert(path.clone()) {
-                    libraries.push(InstallFile {
-                        label: format!("{} ({classifier})", library.name),
-                        download,
-                        path: path.clone(),
-                    });
-                }
-                native_archives.push((path, library.extract.clone()));
-            }
-        }
     }
     download_files(&client, libraries, &events).await?;
+    download_files(&client, native_files, &events).await?;
 
     if let Some(asset_download) = &metadata.asset_index {
         let index_id = if asset_download.id.is_empty() {
@@ -221,6 +218,23 @@ pub async fn install_version(
         }
     }
 
+    let mut primary = vec![InstallFile {
+        download: metadata.downloads.client.clone(),
+        path: paths.version_jar(&version.id),
+        label: "client".to_owned(),
+    }];
+    if let Some(logging) = &metadata.logging {
+        let name = download_name(&logging.client.file, "client-log.xml");
+        primary.push(InstallFile {
+            download: logging.client.file.clone(),
+            path: paths.assets().join("log_configs").join(name),
+            label: "logging configuration".to_owned(),
+        });
+    }
+    download_files(&client, primary, &events).await?;
+
+    write_atomic(&paths.version_json(&version.id), &metadata_bytes).await?;
+
     events.send(TaskEvent::Installed(version.id)).ok();
     Ok(())
 }
@@ -274,7 +288,7 @@ async fn materialize_legacy_assets(
             bail!("asset index contains an unsafe path: {name}");
         }
         let base = if index.map_to_resources {
-            paths.root().join("resources")
+            paths.game_dir().join("resources")
         } else {
             paths.assets().join("virtual").join(index_id)
         };

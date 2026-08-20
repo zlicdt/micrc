@@ -111,6 +111,97 @@ async fn installs_client_library_and_native_archive() {
     assert!(installed);
 }
 
+#[tokio::test]
+async fn installs_coordinate_native_library_into_natives_dir() {
+    let client_bytes = b"mock client".to_vec();
+    let library_bytes = b"mock library".to_vec();
+    let native_bytes = native_archive();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let metadata = serde_json::json!({
+        "id": "mock-version-coordinate",
+        "type": "release",
+        "mainClass": "com.example.Main",
+        "assets": "",
+        "downloads": {
+            "client": download_json(&base_url, "/client.jar", &client_bytes, "")
+        },
+        "libraries": [
+            {
+                "name": "com.example:mock:1.0",
+                "downloads": {
+                    "artifact": download_json(
+                        &base_url,
+                        "/library.jar",
+                        &library_bytes,
+                        "com/example/mock/1.0/mock-1.0.jar"
+                    )
+                }
+            },
+            {
+                "name": "com.example:mock:1.0:natives-linux",
+                "rules": [{ "action": "allow", "os": { "name": "linux" } }],
+                "downloads": {
+                    "artifact": download_json(
+                        &base_url,
+                        "/native.jar",
+                        &native_bytes,
+                        "com/example/mock/1.0/mock-1.0-natives-linux.jar"
+                    )
+                }
+            }
+        ],
+        "arguments": { "jvm": [], "game": [] }
+    });
+    let metadata_bytes = serde_json::to_vec(&metadata).unwrap();
+    let mut responses = HashMap::new();
+    responses.insert("/version.json".to_owned(), metadata_bytes.clone());
+    responses.insert("/client.jar".to_owned(), client_bytes);
+    responses.insert("/library.jar".to_owned(), library_bytes);
+    responses.insert("/native.jar".to_owned(), native_bytes);
+    let server = tokio::spawn(serve(listener, Arc::new(responses)));
+
+    let temporary = temp_dir::TempDir::new().unwrap();
+    let paths = MinecraftPaths::new(temporary.path());
+    let summary = VersionSummary {
+        id: "mock-version-coordinate".to_owned(),
+        kind: "release".to_owned(),
+        url: format!("{base_url}/version.json"),
+        sha1: sha1(&metadata_bytes),
+        release_time: "2026-01-01T00:00:00Z".to_owned(),
+    };
+    let (events, mut receiver) = unbounded_channel();
+    install_version(reqwest::Client::new(), paths.clone(), summary, events)
+        .await
+        .unwrap();
+    server.abort();
+
+    assert!(
+        paths
+            .natives("mock-version-coordinate")
+            .join("mock-native")
+            .is_file()
+    );
+    assert!(
+        paths
+            .libraries()
+            .join("com/example/mock/1.0/mock-1.0.jar")
+            .is_file()
+    );
+    assert_eq!(
+        tokio::fs::read(paths.version_jar("mock-version-coordinate"))
+            .await
+            .unwrap(),
+        b"mock client"
+    );
+    let mut installed = false;
+    while let Ok(event) = receiver.try_recv() {
+        installed |=
+            matches!(event, TaskEvent::Installed(ref id) if id == "mock-version-coordinate");
+    }
+    assert!(installed);
+}
+
 async fn serve(listener: TcpListener, responses: Arc<HashMap<String, Vec<u8>>>) {
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {

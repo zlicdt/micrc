@@ -5,9 +5,10 @@ micrc is a terminal-native Minecraft Java Edition launcher built with Rust and R
 
 ## Requirements
 
+- x86_64 Linux desktop
 - Terminal with xterm-256color
-- JRE
-- Rust
+- Java runtime (JRE or JDK)
+- Rust for building from source
 
 ## Build and run
 
@@ -16,7 +17,7 @@ cargo build --release
 ./target/release/micrc
 ```
 
-The default data directory is `$XDG_DATA_HOME/micrc` or `$HOME/.local/share/micrc` on Linux, `%APPDATA%\micrc` on Windows, and the equivalent home-based path on macOS. Set `MICRC_HOME` to use a different directory.
+The default data directory is `$XDG_DATA_HOME/micrc` or `$HOME/.local/share/micrc`. Set `MICRC_HOME` to use a different directory.
 
 ## Controls
 
@@ -49,13 +50,13 @@ Create an application registration that supports personal Microsoft accounts, en
 
 Start Microsoft login from the Accounts workspace. micrc opens the device verification page in the default browser and displays the verification URL and code in the terminal. Complete the Microsoft sign-in in the browser while micrc waits. If the browser cannot be opened, use the displayed URL manually; press `Enter` or `o` to retry opening it. micrc then validates Xbox authorization, Minecraft ownership, and the Java Edition profile.
 
-Access and refresh tokens are stored in `config.json`. On Unix systems, micrc sets the data directory to mode `0700` and the configuration file to mode `0600`.
+Access and refresh tokens are stored in `config.json`. micrc sets the data directory to mode `0700` and the configuration file to mode `0600`.
 
 Detailed account and version workflows are documented in the [user guide](docs/user-guide.md).
 
 ## Scope
 
-micrc installs and launches official vanilla versions. Forge, Fabric, NeoForge, Quilt, custom inherited version profiles, and automatic Java runtime installation are outside the current scope.
+micrc installs and launches official vanilla versions on x86_64 Linux. Forge, Fabric, NeoForge, Quilt, custom inherited version profiles, and automatic Java runtime installation are outside the current scope.
 
 ## Development
 

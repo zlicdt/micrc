@@ -196,7 +196,7 @@ impl App {
     }
 
     fn refresh_manifest(&mut self) {
-        if self.active_task {
+        if self.active_task || self.game_running {
             self.status = "Another task is already running".to_owned();
             return;
         }
@@ -219,6 +219,12 @@ impl App {
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if self.device_login.is_some() {
+            if key.code == KeyCode::Char('q')
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+            {
+                self.should_quit = true;
+                return Ok(());
+            }
             match key.code {
                 KeyCode::Esc => {
                     if let Some(cancel) = self.auth_cancel.take() {
@@ -605,6 +611,12 @@ impl App {
     }
 
     fn handle_version_deletion_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('q')
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
+            self.should_quit = true;
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('n') => {
                 self.version_deletion = None;
